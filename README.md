@@ -33,7 +33,7 @@ sudo apt install poppler-utils
 ```
 
 > macOS uses built-in `sips` for single-page PDFs — zero extra deps.  
-> Multi-page PDFs on macOS need `pip install pyobjc-framework-Quartz`.
+> Multi-page PDFs: `brew install poppler` (macOS) or `apt install poppler-utils` (Linux).
 
 ### 2. Install
 
@@ -106,7 +106,7 @@ export OCR_MODEL="glm-ocr:q8_0"
 
 | Platform | Single-page | Multi-page |
 |---|---|---|
-| **macOS** | `sips` (built-in, zero-deps) | `pip install pyobjc-framework-Quartz` |
+| **macOS** | `sips` (built-in, zero-deps) | `brew install poppler` |
 | **Linux / WSL** | `pdftoppm` (poppler-utils) | `pdftoppm` (poppler-utils) |
 
 The extension auto-detects multi-page PDFs and shows install instructions if the required tools are missing — it won't silently drop pages.

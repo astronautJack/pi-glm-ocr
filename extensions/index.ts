@@ -14,9 +14,8 @@
  * Prerequisites:
  *   1. Install Ollama: https://ollama.com/download
  *   2. Pull a model:  ollama pull glm-ocr
- *   3. For PDF support on macOS: built-in sips (page 1)
- *      For multi-page macOS: pip install pyobjc-framework-Quartz
- *      For Linux: apt install poppler-utils (pdftoppm)
+ *   3. For multi-page PDF on macOS: brew install poppler
+ *      For Linux: apt install poppler-utils
  *
  * Install:
  *   pi install npm:pi-minimodel-ocr
@@ -214,10 +213,10 @@ const ocrTool = defineTool({
 							content: [{
 								type: "text",
 								text:
-									`⚠️ Multi-page PDF detected (${pageCount} pages) but pyobjc is not installed.\n` +
+									`⚠️ Multi-page PDF detected (${pageCount} pages) but pdftoppm is not installed.\n` +
 									`Only page 1 will be processed with built-in sips.\n` +
 									`\nTo OCR all pages:\n` +
-									`  pip install pyobjc-framework-Quartz`,
+									`  brew install poppler`,
 							}],
 							details: {},
 						});
@@ -372,7 +371,7 @@ async function getPdfPageCount(pdfPath: string): Promise<number> {
 
 /**
  * Convert a single PDF page to PNG.
- * - macOS: tries sips (built-in), then pyobjc (pip install)
+ * - macOS: tries sips (built-in), then pdftoppm (brew)
  * - Linux: uses pdftoppm (poppler-utils)
  */
 async function convertPdfPage(pdfPath: string, pageIndex: number, outPath: string): Promise<void> {
@@ -390,18 +389,16 @@ async function convertPdfPage(pdfPath: string, pageIndex: number, outPath: strin
 	}
 }
 
-/** Check if macOS has multi-page PDF support (pyobjc). Cached. */
+/** Check if macOS has multi-page PDF support (pdftoppm). Cached. */
 let macMultiPageCheck: { done: boolean; available: boolean } | null = null;
 
 async function checkMacMultiPageSupport(): Promise<boolean> {
 	if (macMultiPageCheck?.done) return macMultiPageCheck.available;
 
 	try {
-		const py = await execCmdCapture("python3", ["-c", "from Quartz import CGPDFDocumentCreateWithURL; print('OK')"]);
-		if (py.includes("OK")) {
-			macMultiPageCheck = { done: true, available: true };
-			return true;
-		}
+		await execCmdCapture("pdftoppm", ["-v"]);
+		macMultiPageCheck = { done: true, available: true };
+		return true;
 	} catch {}
 
 	macMultiPageCheck = { done: true, available: false };
@@ -423,79 +420,22 @@ async function convertPdfPageMac(pdfPath: string, pageIndex: number, outPath: st
 		}
 	}
 
-	// Page > 1: use pyobjc (pip install)
+	// Page > 1: use pdftoppm
 	try {
-		await convertPdfPageQuartz(pdfPath, pageIndex, outPath);
+		await execCmdCapture("pdftoppm", [
+			"-png", "-r", "200",
+			"-f", String(pageIndex + 1),
+			"-l", String(pageIndex + 1),
+			"-singlefile",
+			pdfPath,
+			outPath.replace(/\.png$/, ""),
+		]);
 		return;
-	} catch { /* fall through to error */ }
-
-	throw new Error(
-		`Multi-page PDF requires pyobjc (pip install pyobjc-framework-Quartz). ` +
-		`Only page 1 was processed with sips.`,
-	);
-}
-
-/** Python3 + Quartz (CoreGraphics) fallback for multi-page PDFs */
-async function convertPdfPageQuartz(pdfPath: string, pageIndex: number, outPath: string): Promise<void> {
-	const escapedPath = pdfPath.replace(/"/g, '\\"');
-	const escapedOut = outPath.replace(/"/g, '\\"');
-
-	const script = `
-import sys
-try:
-    from Quartz import (
-        CGPDFDocumentCreateWithURL,
-        CGPDFPageGetBoxRect,
-        kCGPDFMediaBox,
-        CGColorSpaceCreateDeviceRGB,
-        CGBitmapContextCreate,
-        CGBitmapContextCreateImage,
-        CGContextDrawPDFPage,
-        CGImageDestinationCreateWithURL,
-        CGImageDestinationAddImage,
-        CGImageDestinationFinalize,
-    )
-    from Foundation import NSURL
-except ImportError:
-    print("QUARTZ_MISSING")
-    sys.exit(0)
-
-pdf_url = NSURL.fileURLWithPath_("${escapedPath}")
-doc = CGPDFDocumentCreateWithURL(pdf_url)
-if not doc:
-    sys.exit(1)
-
-page = doc.getPage(${pageIndex + 1})
-if not page:
-    sys.exit(1)
-
-rect = CGPDFPageGetBoxRect(page, kCGPDFMediaBox)
-scale = 2.5
-width = int(rect.size.width * scale)
-height = int(rect.size.height * scale)
-
-cs = CGColorSpaceCreateDeviceRGB()
-ctx = CGBitmapContextCreate(
-    None, width, height, 8, width * 4,
-    cs, 0x2002
-)
-ctx.scaleCTM(scale, scale)
-CGContextDrawPDFPage(ctx, page)
-cg_img = CGBitmapContextCreateImage(ctx)
-
-out_url = NSURL.fileURLWithPath_("${escapedOut}")
-dest = CGImageDestinationCreateWithURL(out_url, "public.png", 1, None)
-if dest:
-    CGImageDestinationAddImage(dest, cg_img, None)
-    CGImageDestinationFinalize(dest)
-    print("OK")
-`;
-	const py = await execCmdCapture("python3", ["-c", script]);
-	if (py.includes("QUARTZ_MISSING")) {
-		throw new Error("pyobjc-framework-Quartz not installed");
-	}
-	if (!py.includes("OK")) {
-		throw new Error("Python Quartz conversion returned no output");
+	} catch (e: any) {
+		throw new Error(
+			`Multi-page PDF requires pdftoppm (brew install poppler). ` +
+			`Only page 1 was processed with sips.`,
+		);
 	}
 }
 
@@ -561,7 +501,7 @@ export default function ocrExtension(pi: ExtensionAPI) {
 			checkMacMultiPageSupport().then((available) => {
 				if (!available) {
 					ctx.ui.notify(
-						"💡 Multi-page PDF OCR needs pyobjc (pip install pyobjc-framework-Quartz). Page 1 uses built-in sips.",
+						"💡 Multi-page PDF OCR needs pdftoppm (brew install poppler). Page 1 uses built-in sips.",
 						"warning",
 					);
 				}
