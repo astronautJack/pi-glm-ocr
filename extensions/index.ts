@@ -294,11 +294,11 @@ const ocrTool = defineTool({
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
-/** Recommended models with brief usage hints */
+/** Recommended models with brief usage hints (all verifiable on ollama.com) */
 const RECOMMENDED: { model: string; hint: string }[] = [
-	{ model: "glm-ocr:q8_0", hint: "best balance — smaller, faster" },
-	{ model: "glm-ocr", hint: "default — highest accuracy" },
-	{ model: "minicpm-v", hint: "general vision tasks" },
+	{ model: "glm-ocr:q8_0", hint: "balanced — smallest (1.6GB), fast" },
+	{ model: "glm-ocr", hint: "best formula OCR (2.2GB, 94.6 OmniDocBench)" },
+	{ model: "minicpm-v", hint: "strong all-around vision + OCR (8B, 5.5GB)" },
 ];
 
 interface PersistedState {
