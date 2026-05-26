@@ -1,5 +1,5 @@
 {
-  "name": "pi-glm-ocr",
+  "name": "pi-minimodel-ocr",
   "version": "0.1.3",
   "description": "Pi extension: Local OCR via Ollama GLM-OCR (0.9B) — convert images and PDFs to Markdown / LaTeX with high math formula accuracy. Bridges the multimodal gap for non-vision LLMs like DeepSeek.",
   "keywords": [
@@ -21,7 +21,7 @@
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/astronautJack/pi-glm-ocr.git"
+    "url": "git+https://github.com/astronautJack/pi-minimodel-ocr.git"
   },
   "files": [
     "extensions/",

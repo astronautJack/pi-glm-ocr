@@ -1,5 +1,5 @@
 /**
- * pi-glm-ocr — Local GLM-OCR Extension for Pi Coding Agent
+ * pi-minimodel-ocr — Local OCR via Ollama for Pi Coding Agent
  *
  * Registers a `glm_ocr` tool that the LLM can call to read images and PDFs
  * using the locally running GLM-OCR model via Ollama (0.9B).
@@ -18,7 +18,7 @@
  *      For Linux: apt install poppler-utils (pdftoppm)
  *
  * Install:
- *   pi install npm:pi-glm-ocr
+ *   pi install npm:pi-minimodel-ocr
  *   # or locally:
  *   pi -e ./extensions/index.ts
  *
@@ -598,5 +598,5 @@ export default function glmOcrExtension(pi: ExtensionAPI) {
 	});
 
 	// Log registration
-	console.log("[pi-glm-ocr] Extension loaded. Tool: glm_ocr, Command: /glm-ocr");
+	console.log("[pi-minimodel-ocr] Extension loaded. Tool: glm_ocr, Command: /glm-ocr");
 }

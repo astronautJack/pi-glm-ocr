@@ -1,4 +1,4 @@
-# pi-glm-ocr
+# pi-minimodel-ocr
 
 **Local OCR for Pi Coding Agent** — extract text, LaTeX math formulas, and tables from images and PDFs using [GLM-OCR](https://ollama.com/library/glm-ocr) (0.9B) via Ollama.
 
@@ -45,13 +45,13 @@
 ## Install
 
 ```bash
-pi install npm:pi-glm-ocr
+pi install npm:pi-minimodel-ocr
 ```
 
 Or try it without installing:
 
 ```bash
-pi -e npm:pi-glm-ocr
+pi -e npm:pi-minimodel-ocr
 ```
 
 ## Usage
