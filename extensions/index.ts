@@ -29,9 +29,9 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { readFileSync, existsSync, mkdtempSync, readdirSync, unlinkSync, rmdirSync } from "node:fs";
-import { basename, extname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, readdirSync, unlinkSync, rmdirSync, mkdirSync } from "node:fs";
+import { basename, extname, join, dirname } from "node:path";
+import { tmpdir, homedir } from "node:os";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ const ocrTool = defineTool({
 		const resolvedTask = (TASKS.includes(task as Task) ? task : "auto") as Task;
 
 		// Resolve config (modelOverride takes priority over env/config)
-		const config = getConfig(ctx);
+		const config = getConfig();
 		const resolvedModel = modelOverride || config.model;
 
 		// Validate file
@@ -300,29 +300,46 @@ const RECOMMENDED: { model: string; hint: string }[] = [
 	{ model: "minicpm-v", hint: "strong all-around vision + OCR (8B, 5.5GB)" },
 ];
 
-interface PersistedState {
-	model: string;
-	recentModels: string[];
+const SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
+
+export function loadSettingsModel(): string | undefined {
+	try {
+		if (!existsSync(SETTINGS_PATH)) return undefined;
+		const raw = readFileSync(SETTINGS_PATH, "utf8");
+		const settings = JSON.parse(raw);
+		return settings?.minimodelOcr?.model;
+	} catch {
+		return undefined;
+	}
 }
 
-let currentModel: string | null = null;
-let recentModels: string[] = [];
+function saveSettingsModel(model: string): void {
+	try {
+		const dir = dirname(SETTINGS_PATH);
+		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+		let settings: any = {};
+		if (existsSync(SETTINGS_PATH)) {
+			settings = JSON.parse(readFileSync(SETTINGS_PATH, "utf8"));
+		}
+		settings.minimodelOcr = { ...(settings.minimodelOcr || {}), model };
+		writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n", "utf8");
+	} catch { /* best effort */ }
+}
+
 let ollamaHost: string | null = null;
 
-function getConfig(_ctx?: ExtensionContext): OcrConfig {
+function getConfig(): OcrConfig {
 	if (ollamaHost === null) {
 		ollamaHost = process.env.OLLAMA_HOST || "http://localhost:11434";
 	}
-	if (currentModel === null) {
-		currentModel = process.env.OCR_MODEL || "glm-ocr";
-	}
-	return { ollamaHost, model: currentModel };
+	// Priority: env var > settings.json > default
+	const model = process.env.OCR_MODEL || loadSettingsModel() || "glm-ocr";
+	return { ollamaHost, model };
 }
 
 function setModel(model: string): void {
-	currentModel = model;
-	// Move to front of recents, cap at 10, deduplicate
-	recentModels = [model, ...recentModels.filter((m) => m !== model)].slice(0, 10);
+	process.env.OCR_MODEL = model;
+	saveSettingsModel(model);
 }
 
 /** Check if a model exists locally via Ollama API. Returns true if pulled. */
@@ -540,7 +557,7 @@ export default function ocrExtension(pi: ExtensionAPI) {
 	pi.registerCommand("ocr-model", {
 		description: "View or change the OCR model (persists across sessions)",
 		handler: async (args, ctx) => {
-			const config = getConfig(ctx);
+			const config = getConfig();
 
 			// Build select items
 			const items: string[] = [];
@@ -551,17 +568,6 @@ export default function ocrExtension(pi: ExtensionAPI) {
 			items.push("── Recommended ──");
 			for (const r of RECOMMENDED) {
 				items.push(`${r.model}  → ${r.hint}`);
-			}
-
-			if (recentModels.length > 0) {
-				items.push("");
-				items.push("── Recent ──");
-				const deduped = recentModels.filter(
-					(m) => !RECOMMENDED.some((r) => r.model === m),
-				);
-				for (const m of deduped.slice(0, 5)) {
-					items.push(m);
-				}
 			}
 
 			items.push("");
@@ -590,7 +596,7 @@ export default function ocrExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	/** Shared apply-model logic: verify, pull if needed, persist */
+	/** Shared apply-model logic: verify, pull if needed, save to settings.json */
 	async function applyModel(newModel: string, config: OcrConfig, ctx: ExtensionContext) {
 		const exists = await checkModelExists(config.ollamaHost, newModel);
 		if (!exists) {
@@ -609,30 +615,13 @@ export default function ocrExtension(pi: ExtensionAPI) {
 
 		setModel(newModel);
 
-		pi.appendEntry<PersistedState>("ocr-model-config", {
-			model: newModel,
-			recentModels,
-		});
-
 		ctx.ui.setStatus("minimodel-ocr", `OCR: ${newModel} @ ${config.ollamaHost}`);
 		ctx.ui.notify(`OCR model → ${newModel}` + (exists ? "" : " (pulling…)"), "success");
 	}
 
-	// Notify on startup — restore persisted model
+	// Notify on startup
 	pi.on("session_start", async (_event, ctx) => {
-		// Restore persisted model from session entries (last one wins)
-		const entries = ctx.sessionManager.getBranch();
-		for (const entry of entries) {
-			if (entry.type === "custom" && entry.customType === "ocr-model-config") {
-				const data = entry.data as PersistedState | undefined;
-				if (data?.model) {
-					currentModel = data.model;
-					recentModels = data.recentModels || [];
-				}
-			}
-		}
-
-		const config = getConfig(ctx);
+		const config = getConfig();
 		ctx.ui.setStatus(
 			"minimodel-ocr",
 			`OCR: ${config.model} @ ${config.ollamaHost}`,
