@@ -28,7 +28,6 @@
 
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { spawn } from "node:child_process";
 import { readFileSync, existsSync, mkdtempSync, readdirSync, unlinkSync, rmdirSync } from "node:fs";
 import { basename, extname, join } from "node:path";
@@ -568,116 +567,90 @@ export default function ocrExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	// Register /ocr-model command with persistence + autocomplete + interactive picker
+	// Register /ocr-model command with interactive picker + custom input
 	pi.registerCommand("ocr-model", {
-		description: "View or change the default OCR model (persists across sessions, Tab for autocomplete)",
-		getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
-			const all = [
-				...RECOMMENDED.map((r) => ({
-					value: r.model,
-					label: `${r.model} — ${r.hint}`,
-				})),
-				...recentModels
-					.filter((m) => !RECOMMENDED.some((r) => r.model === m))
-					.map((m) => ({ value: m, label: `${m} (recent)` })),
-			];
-			const filtered = all.filter((i) => i.value.startsWith(prefix));
-			return filtered.length > 0 ? filtered.slice(0, 8) : null;
-		},
+		description: "View or change the default OCR model (persists across sessions)",
 		handler: async (args, ctx) => {
 			const trimmed = (args || "").trim();
 			const config = getConfig(ctx);
 
-			if (!trimmed) {
-				// Interactive picker: recommended + recents
-				const items: string[] = [];
-
-				items.push(`Current: ${config.model}`);
-				items.push("");
-
-				items.push("── Recommended ──");
-				for (const r of RECOMMENDED) {
-					items.push(`${r.model}  → ${r.hint}`);
-				}
-
-				if (recentModels.length > 0) {
-					items.push("");
-					items.push("── Recent ──");
-					const deduped = recentModels.filter(
-						(m) => !RECOMMENDED.some((r) => r.model === m),
-					);
-					for (const m of deduped.slice(0, 5)) {
-						items.push(m);
-					}
-				}
-
-				const choice = await ctx.ui.select("OCR Model — press Enter to switch, Esc to cancel", items);
-				if (!choice || choice.startsWith("──") || choice.startsWith("Current") || choice === "") {
-					return;
-				}
-
-				// Extract model name from selection (strip hint part)
-				const newModel = choice.split(/\s+→/)[0].trim();
-
-				// Verify the model exists locally
-				const exists = await checkModelExists(config.ollamaHost, newModel);
-				if (!exists) {
-					const pull = await ctx.ui.confirm(
-						"Model not found",
-						`${newModel} is not pulled.\n\nPull it now? (ollama pull ${newModel})`,
-					);
-					if (!pull) return;
-					ctx.ui.notify(`Pulling ${newModel}…`, "info");
-					// Fire-and-forget pull (takes a while, progress in widget)
-					pullModel(newModel, ctx).then(() => {
-						ctx.ui.notify(`${newModel} pull complete`, "success");
-					}).catch((e) => {
-						ctx.ui.notify(`Pull failed: ${e.message}`.slice(0, 200), "error");
-					});
-					// Apply the model anyway so user doesn't lose their choice
-				}
-
-				setModel(newModel);
-
-				pi.appendEntry<PersistedState>("ocr-model-config", {
-					model: newModel,
-					recentModels,
-				});
-
-				ctx.ui.setStatus("minimodel-ocr", `OCR: ${newModel} @ ${config.ollamaHost}`);
-				ctx.ui.notify(`OCR model → ${newModel}` + (exists ? "" : " (pulling…)"), "success");
+			// Fast path: model name provided directly
+			if (trimmed) {
+				await applyModel(trimmed.split(/\s+/)[0], config, ctx);
 				return;
 			}
 
-			const newModel = trimmed.split(/\s+/)[0];
+			// Build picker items
+			const items: string[] = [];
 
-			// Verify the model exists locally
-			const exists = await checkModelExists(config.ollamaHost, newModel);
-			if (!exists) {
-				const pull = await ctx.ui.confirm(
-					"Model not found",
-					`${newModel} is not pulled.\n\nPull it now? (ollama pull ${newModel})`,
-				);
-				if (!pull) return;
-				ctx.ui.notify(`Pulling ${newModel}…`, "info");
-				pullModel(newModel, ctx).then(() => {
-					ctx.ui.notify(`${newModel} pull complete`, "success");
-				}).catch((e) => {
-					ctx.ui.notify(`Pull failed: ${e.message}`.slice(0, 200), "error");
-				});
+			items.push(`Current: ${config.model}`);
+			items.push("");
+
+			items.push("── Recommended ──");
+			for (const r of RECOMMENDED) {
+				items.push(`${r.model}  → ${r.hint}`);
 			}
 
-			setModel(newModel);
+			if (recentModels.length > 0) {
+				items.push("");
+				items.push("── Recent ──");
+				const deduped = recentModels.filter(
+					(m) => !RECOMMENDED.some((r) => r.model === m),
+				);
+				for (const m of deduped.slice(0, 5)) {
+					items.push(m);
+				}
+			}
 
-			pi.appendEntry<PersistedState>("ocr-model-config", {
-				model: newModel,
-				recentModels,
-			});
+			items.push("");
+			items.push("── Custom… (type any model name) ──");
 
-			ctx.ui.setStatus("minimodel-ocr", `OCR: ${newModel} @ ${config.ollamaHost}`);
-			ctx.ui.notify(`OCR model → ${newModel}` + (exists ? "" : " (pulling…)"), "success");
+			const choice = await ctx.ui.select("OCR Model — Enter to pick, Esc to cancel", items);
+			if (!choice || choice.startsWith("──") || choice.startsWith("Current") || choice === "") {
+				return;
+			}
+
+			// Custom input
+			if (choice.includes("Custom")) {
+				const custom = await ctx.ui.input("Enter model name (e.g. deepseek-ocr)");
+				if (!custom?.trim()) return;
+				await applyModel(custom.trim(), config, ctx);
+				return;
+			}
+
+			// Picked from list — extract model name
+			const newModel = choice.split(/\s+→/)[0].trim();
+			await applyModel(newModel, config, ctx);
 		},
 	});
+
+	/** Shared apply-model logic: verify, pull if needed, persist */
+	async function applyModel(newModel: string, config: OcrConfig, ctx: ExtensionContext) {
+		const exists = await checkModelExists(config.ollamaHost, newModel);
+		if (!exists) {
+			const pull = await ctx.ui.confirm(
+				"Model not found",
+				`${newModel} is not pulled.\n\nPull it now? (ollama pull ${newModel})`,
+			);
+			if (!pull) return;
+			ctx.ui.notify(`Pulling ${newModel}…`, "info");
+			pullModel(newModel, ctx).then(() => {
+				ctx.ui.notify(`${newModel} pull complete`, "success");
+			}).catch((e) => {
+				ctx.ui.notify(`Pull failed: ${e.message}`.slice(0, 200), "error");
+			});
+		}
+
+		setModel(newModel);
+
+		pi.appendEntry<PersistedState>("ocr-model-config", {
+			model: newModel,
+			recentModels,
+		});
+
+		ctx.ui.setStatus("minimodel-ocr", `OCR: ${newModel} @ ${config.ollamaHost}`);
+		ctx.ui.notify(`OCR model → ${newModel}` + (exists ? "" : " (pulling…)"), "success");
+	}
 
 	// Notify on startup — restore persisted model
 	pi.on("session_start", async (_event, ctx) => {
